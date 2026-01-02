@@ -1,6 +1,7 @@
 import collections
 import math
 import itertools
+import returns
 
 class mdq:
     def __init__(self) -> None:
@@ -15,23 +16,22 @@ class mdq:
         self.dimReverseIndex = {}
         self.data = []
         self.strides = {}
-        self.VNAME = "Values"
+        self.values = {}
 
-    def setDims(self, dimensions : dict) -> None:
-        if self.VNAME not in dimensions:
-            raise ValueError ("Expected a dimension called value")
-        if len(dimensions[self.VNAME]) == 0:
-            raise ValueError ("Value Dimension must have one attribute")
+    def setDims(self, dimensions : dict, measures: dict) -> None:
         
         #set up core dimensions and indices
-        #TODO move Values to the end, but it shoudn't matter where it is
         for name, attributes in dimensions.items():
             self.dims[name] = tuple(dict.fromkeys(attributes))
             positions = enumerate(self.dims[name])
             self.dimIndex[name] = {v : p for p, v in positions}
             self.dimReverseIndex[name] = {p : v for p, v in positions}       
         
-        #build data matrix & strides
+        #set up measures definiton
+        #TODO validate measures
+        self.values = measures
+       
+       #build data matrix & strides
         cells = 1
         
         for attributes in self.dims.values():
@@ -65,16 +65,36 @@ class mdq:
         if self.isAddress(dims_addr):
             index = [(dim, self.strides[dim], self.dimIndex[dim][attr]) for dim, attr in dims_addr.items()]
             index = sum(map(lambda x: x[1] * x[2], index))
-            return index
+            out = index
         else:
-            return -1
+            out = -1
+        #print("getIndex:", out)
+        return out
+        
+    def enumerateAddresses(self) -> list:
+        """
+        Returns a list of each cell's address in the cube
+        """        
+        dim = list(self.dims.keys())
+        attributes = self.dims.values() 
+        queries = [zip(dim, attributes) for attributes in itertools.product(*attributes)]
+        queries = [{k:v for k,v in q} for q in queries ]
+
+        out = queries
+
+        # [{D1:V1, D2,V1 .. Dn, V1},{D1:V2, D2,V2 .. Dn, V2}...{Dn:Vx, D2,Vy .. Dn, Vz}]
+        return queries
+
+
     
     def setValue(self, dims_addr: dict, value) -> None:
         #calculate value index
         self.data[self.getIndex(dims_addr)] = value
 
     def getValue(self, dims_addr: dict):
-        return self.data[self.getIndex(dims_addr)]
+        out = self.data[self.getIndex(dims_addr)]
+        #print("getValue:", out)
+        return out
 
     def isAddress(self, dims_addr: dict) -> bool:
         # check address is complete
@@ -91,36 +111,135 @@ class QubeViewer:
         self.view = None
     
     def getDefaultView(self):
-        out = {"cols": self.q.dims, "rows":self.q.dims }
+        cols = list(self.q.dims.keys()) + list(self.q.values.keys())
+        out = {"cols": cols, "rows": None }
         return out
     
+    def setView(self, rows: list, cols: list):
+        viewspec = {"cols": cols, "rows": rows }
+        self.view = viewspec
+
+    
     def toString(self) -> str:
-        out =  ["An Enigmantic Multidimensional cube:"]
+        def toHeaderStr(headers):
+            return ",\t ".join(headers)
+
+        def toDataStr(rows):
+            out = []
+            for row in rows:
+                out.append(",\t".join([str(cell) for cell in row]))
+            
+            return "\n".join(out)
+
 
         if self.view is None:
             viewspec = self.getDefaultView()
         else:
             viewspec = self.view
         
-        #header
-        out.append(str(tuple(viewspec["cols"].keys())))
-        out += [str(tuple(viewspec["cols"].values())) for _ in viewspec["rows"]]
+        q = self.buildTable(viewspec)
+        out = (
+            f"{toHeaderStr(q["colHeader"])}\n"
+            f"{toDataStr(q["dataBlock"])}\n"
+        )
+        return out
+        #return "\n".join(self.buildTable(viewspec).values())
+    
+    def toHTML(self) -> str:
+        def toHeaderStr(headers):
+            out = [f"\t\t<th>{h}</th>" for h in headers] 
+            return "\t<tr>\n" + "\n".join(out) + "\n\t</tr>\n"
+        
+        def toDataStr(rows):
+            out = []
+            for row in rows:
+                rout = []
+                for cell in row:
+                    rout.append(f"\t\t<td>{cell}</td>")
+                
+                out.append("\t<tr>")
+                out.append("\n".join(rout))
+                out.append("\t</tr>")
 
-        return "\n".join(out)
+            
+            return "\n".join(out)
+
+        
+        if self.view is None:
+            viewspec = self.getDefaultView()
+        else:
+            viewspec = self.view
+        
+        q = self.buildTable(viewspec)
+        out = (
+            f"<table>\n"
+            f"{toHeaderStr(q["colHeader"])}\n"
+            f"{toDataStr(q["dataBlock"])}\n"
+            f"</table>\n"
+        )
+        return out
+
+
+
+    def buildTable(self, viewspec):
+        #print(viewspec)
+
+        def buildTableHeader():
+            
+            return "Dimension Header"
+
+        def buildColHeader():
+            out = viewspec["cols"]
+            return out
+
+        def buildDataBlock():
+            
+            rows = self.q.enumerateAddresses()
+            cols = viewspec["cols"]
+            rows = [buildRow(row, cols) for row in rows]
+            
+            return rows
+        
+        
+        
+        def buildRow(query, cols):
+            cells = []
+            for col in cols:
+                if col in query:
+                    cells.append(query[col])
+                else: #you are in a value
+                    cells.append(self.q.getValue(query))
+            
+            return cells
+        
+        
+        table = {
+            "tableHeader" : buildTableHeader(),
+            "colHeader": buildColHeader(),
+            "dataBlock": buildDataBlock()
+        }
+
+        return table
+
+
+
 
 class Qube:
     
-    def __init__(self, dimensions) -> None:
+    def __init__(self, dimensions, measures) -> None:
         self.q = mdq()
-        self.q.setDims(dimensions)
+        self.q.setDims(dimensions, measures)
         self.view = QubeViewer(self.q)
         
 
     def __str__(self) -> str:
         return self.view.toString()
     
-    def __repr__(self) -> str:
-        return self.__str__()
+    # def __repr__(self) -> str:
+    #     return self.__str__()
+    
+    def _repr_html_(self) -> str:
+        return self.view.toHTML()
     
     def setValue(self, dims_addr: dict, value) -> None:
         self.q.setValue(dims_addr, value)
@@ -128,17 +247,9 @@ class Qube:
     def getValue(self, dims_addr: dict):
         return self.q.getValue(dims_addr)
 
+    def setView(self, rows, cols):
+        self.view.setView(rows,cols)
 
-        
-
-    
-
-
-
-
-
-# class Mdim():
-    
         
 
 
@@ -147,39 +258,6 @@ class Qube:
 
     
 
-        
-
-#     def getValue(self, path):
-#         list_path = [(k,v) for k,v in path.items()]
-#         return self._getValue(list_path, self.values)
-
-
-
-
-#     def __str__(self):
-#         out = []
-
-#         header = "\t".join(list(self.dims.keys())+["Values"])
-#         out.append(header)
-
-#         rows = list(itertools.product(*self.dims.values()))
-
-#         tmp =[]
-#         for row in rows:
-#             path = {tuple(self.dims.keys())[i]: row[i] for i in range(len(row))}
-#             value = self.getValue(path)
-#             value = value if value is not None else "None"
-#             elements = list(row)
-#             elements.append(value)
-#             new_row = "\t".join(map(str,elements))
-#             tmp.append(new_row)
-
-#         #rows = ["\t".join(map(str, row)) for row in rows] - nice version
-#         out += tmp
-#         return "\n".join(out)
-
-#     def print(self):
-#         print(self.__str__)
 
 
 
